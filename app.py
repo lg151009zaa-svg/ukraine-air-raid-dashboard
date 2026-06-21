@@ -1,10 +1,10 @@
-import streamlit as pd_stream_app # Using an alias to avoid initialization conflicts
+import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
 # Set Page Configuration for Streamlit
-pd_stream_app.set_page_config(page_title="Ukraine Air Raid Analytics", layout="wide")
+st.set_page_config(page_title="Ukraine Air Raid Analytics", layout="wide")
 
 # ==========================================
 # STEP 1: Data Automation & Error Handling
@@ -35,8 +35,8 @@ try:
     df_clean['hour'] = df_clean['started_at'].dt.hour
     
 except Exception as e:
-    pd_stream_app.error(f"Critical Error: Unable to fetch or process live data from the repository. Details: {e}")
-    pd_stream_app.stop()
+    st.error(f"Critical Error: Unable to fetch or process live data from the repository. Details: {e}")
+    st.stop()
 
 # ==========================================
 # STEP 2: Automated Executive Summary Function
@@ -68,25 +68,21 @@ def generate_executive_summary(df_metrics, regional_df, gap_df):
 # ==========================================
 # STEP 3: User Interface Structure (Sidebar)
 # ==========================================
-pd_stream_app.sidebar.title("Configuration Panel")
-pd_stream_app.sidebar.markdown("Filter and adjust visualization settings dynamically.")
+st.sidebar.title("Configuration Panel")
+st.sidebar.markdown("Filter and adjust visualization settings dynamically.")
 
 # Dropdown for selecting a specific region
 unique_regions = sorted(df_clean['region'].unique())
-selected_region = pd_stream_app.sidebar.selectbox("Select Region for Deep Dive:", unique_regions)
+selected_region = st.sidebar.selectbox("Select Region for Deep Dive:", unique_regions)
 
 # Slider for choosing the number of widespread attacks
-num_corridors = pd_stream_app.sidebar.slider("Widespread Attacks to Display:", min_value=3, max_value=10, value=3)
+num_corridors = st.sidebar.slider("Widespread Attacks to Display:", min_value=3, max_value=10, value=3)
 
 # ==========================================
 # STEP 4: Processing Pre-calculated Aggregations
 # ==========================================
 # Regional stats
 region_stats = df_clean.groupby('region').size().reset_index(name='alert_count').sort_values(by='alert_count', ascending=False)
-region_stats_with_mean = df_clean.groupby('region').agg(
-    alert_count=('duration_min', 'count'),
-    mean_duration_min=('duration_min', 'mean')
-).reset_index().sort_values(by='alert_count', ascending=False)
 
 # Gap rankings via loop calculation
 gap_records = []
@@ -99,23 +95,23 @@ gap_summary_df = pd.DataFrame(gap_records).sort_values(by='avg_quiet_time_hours'
 # ==========================================
 # STEP 5: Main Panel Tabs Layout
 # ==========================================
-pd_stream_app.title("🇺🇦 Ukraine Air Raid Alerts: Time Series Dashboard")
-tab1, tab2, tab3 = pd_stream_app.tabs(["National Overview", "Regional Deep Dive", "Quiet Time Rankings"])
+st.title("🇺🇦 Ukraine Air Raid Alerts: Time Series Dashboard")
+tab1, tab2, tab3 = st.tabs(["National Overview", "Regional Deep Dive", "Quiet Time Rankings"])
 
 # --- TAB 1: National Overview ---
 with tab1:
     # Render Automated Report Summary
-    pd_stream_app.markdown(generate_executive_summary(df_clean, region_stats, gap_summary_df))
-    pd_stream_app.markdown("---")
+    st.markdown(generate_executive_summary(df_clean, region_stats, gap_summary_df))
+    st.markdown("---")
     
     # Render KPI Cards
-    col1, col2, col3, col4 = pd_stream_app.columns(4)
+    col1, col2, col3, col4 = st.columns(4)
     col1.metric("Total Air Raid Alerts", f"{len(df_clean):,}")
     col2.metric("Mean Duration", f"{df_clean['duration_min'].mean():.1f} min")
     col3.metric("Median Duration", f"{df_clean['duration_min'].median():.1f} min")
     col4.metric("Standard Deviation", f"{df_clean['duration_min'].std():.1f} min")
     
-    pd_stream_app.markdown("### National Visualizations")
+    st.markdown("### National Visualizations")
     sns.set_theme(style="whitegrid")
     
     # Plot 1: Horizontal Bar Chart
@@ -124,7 +120,7 @@ with tab1:
     ax1.set_title('Total Number of Air Raid Alerts by Region', fontsize=14)
     ax1.set_xlabel('Number of Alerts')
     ax1.set_ylabel('Region')
-    pd_stream_app.pyplot(fig1)
+    st.pyplot(fig1)
     
     # Plot 2: Line Chart for Hourly Trend
     hourly_trend = df_clean.groupby('hour').size().reset_index(name='count')
@@ -134,7 +130,7 @@ with tab1:
     ax2.set_xlabel('Hour of the Day (0-23 UTC)')
     ax2.set_ylabel('Total Alert Count')
     ax2.set_xticks(range(0, 24))
-    pd_stream_app.pyplot(fig2)
+    st.pyplot(fig2)
     
     # Plot 3: National Global Heatmap
     national_pivot = df_clean.pivot_table(index='region', columns='hour', values='duration_min', aggfunc='count').fillna(0)
@@ -144,10 +140,10 @@ with tab1:
     ax3.set_title('National Heatmap: Alert Density by Region and Hour of Day (UTC)', fontsize=14)
     ax3.set_xlabel('Hour of the Day (0-23 UTC)')
     ax3.set_ylabel('Region')
-    pd_stream_app.pyplot(fig3)
+    st.pyplot(fig3)
     
     # Widespread Corridor Attack List
-    pd_stream_app.markdown(f"### Top {num_corridors} Widespread Attack Corridors")
+    st.markdown(f"### Top {num_corridors} Widespread Attack Corridors")
     df_clean['date_hour'] = df_clean['started_at'].dt.floor('h')
     corridors = df_clean.groupby('date_hour')['region'].unique().reset_index()
     corridors['regions_count'] = corridors['region'].apply(len)
@@ -155,18 +151,18 @@ with tab1:
     
     for index, row in top_corridors.iterrows():
         time_str = row['date_hour'].strftime('%Y-%m-%d %H:00')
-        pd_stream_app.info(f"**[{time_str}]** Affected Regions Count: **{row['regions_count']}** \n*Regions:* {', '.join(row['region'])}")
+        st.info(f"**[{time_str}]** Affected Regions Count: **{row['regions_count']}** \n*Regions:* {', '.join(row['region'])}")
 
 # --- TAB 2: Regional Deep Dive ---
 with tab2:
-    pd_stream_app.markdown(f"## Customized Analytics for: **{selected_region}**")
+    st.markdown(f"## Customized Analytics for: **{selected_region}**")
     
     # Filter data specific to selected region
     region_subset = df_clean[df_clean['region'] == selected_region].copy()
     avg_quiet_time = gap_summary_df[gap_summary_df['region'] == selected_region]['avg_quiet_time_hours'].values[0]
     
     # Display specialized metrics
-    r_col1, r_col2 = pd_stream_app.columns(2)
+    r_col1, r_col2 = st.columns(2)
     r_col1.metric("Total Alerts in Region", f"{len(region_subset):,}")
     r_col2.metric("Average Quiet Time Between Waves", f"{avg_quiet_time:.1f} Hours")
     
@@ -187,10 +183,10 @@ with tab2:
     ax4.set_xlabel('Hour of the Day (0-23 UTC)')
     ax4.set_ylabel('Day of Week')
     ax4.set_xticks(range(0, 24))
-    pd_stream_app.pyplot(fig4)
+    st.pyplot(fig4)
 
 # --- TAB 3: Quiet Time Rankings ---
 with tab3:
-    pd_stream_app.markdown("## National Quiet Time Rankings")
-    pd_stream_app.markdown("Regions sorted by the average period of silence between consecutive air raid alerts. Shorter periods indicate high intensity or frequent tactical overlapping.")
-    pd_stream_app.dataframe(gap_summary_df, use_container_width=True)
+    st.markdown("## National Quiet Time Rankings")
+    st.markdown("Regions sorted by the average period of silence between consecutive air raid alerts. Shorter periods indicate high intensity or frequent tactical overlapping.")
+    st.dataframe(gap_summary_df, use_container_width=True)
