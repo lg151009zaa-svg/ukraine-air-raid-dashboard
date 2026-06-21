@@ -11,9 +11,9 @@ st.set_page_config(page_title="Ukraine Air Raid Analytics", layout="wide")
 # ==========================================
 URL = 'https://raw.githubusercontent.com/Vadimkin/ukrainian-air-raid-sirens-dataset/main/datasets/volunteer_data_uk.csv'
 
-try:
-    # Fetch dataset directly from GitHub URL on every refresh
-    df = pd.read_csv(URL)
+@st.cache_data(ttl=3600)  # Cache data for 1 hour to optimize performance
+def load_and_clean_data(url):
+    df = pd.read_csv(url)
     
     # Handle column names dynamically
     if 'region_title' in df.columns:
@@ -34,19 +34,38 @@ try:
     df_clean['hours_since_last_alert'] = df_clean.groupby('region')['started_at'].diff().dt.total_seconds() / 3600
     df_clean['hour'] = df_clean['started_at'].dt.hour
     
+    return df_clean
+
+try:
+    df_clean = load_and_clean_data(URL)
 except Exception as e:
     st.error(f"Critical Error: Unable to fetch or process live data from the repository. Details: {e}")
     st.stop()
 
 # ==========================================
-# STEP 2: Automated Executive Summary Function
+# STEP 2: Pre-calculating Global Aggregations
+# ==========================================
+unique_regions = sorted(df_clean['region'].unique())
+
+# Regional frequency stats
+region_stats = df_clean.groupby('region').size().reset_index(name='alert_count').sort_values(by='alert_count', ascending=False)
+
+# Gap rankings via loop calculation
+gap_records = []
+for reg in unique_regions:
+    reg_data = df_clean[df_clean['region'] == reg]
+    mean_gap = reg_data['hours_since_last_alert'].mean()
+    gap_records.append({'region': reg, 'avg_quiet_time_hours': mean_gap})
+gap_summary_df = pd.DataFrame(gap_records).sort_values(by='avg_quiet_time_hours', ascending=True).reset_index(drop=True)
+
+# ==========================================
+# STEP 3: Automated Executive Summary Function
 # ==========================================
 def generate_executive_summary(df_metrics, regional_df, gap_df):
     total_alerts = len(df_metrics)
     mean_dur = df_metrics['duration_min'].mean()
     median_dur = df_metrics['duration_min'].median()
     
-    # Extract insights for text generation
     top_region = regional_df.iloc[0]['region']
     top_region_count = regional_df.iloc[0]['alert_count']
     
@@ -66,40 +85,29 @@ def generate_executive_summary(df_metrics, regional_df, gap_df):
     return summary_text
 
 # ==========================================
-# STEP 3: User Interface Structure (Sidebar)
+# STEP 4: Sidebar Navigation & Dynamic Filtering
 # ==========================================
-st.sidebar.title("Configuration Panel")
-st.sidebar.markdown("Filter and adjust visualization settings dynamically.")
+st.sidebar.title("Navigation Menu")
+nav_choice = st.sidebar.radio("Go to:", ["National Overview", "Regional Deep Dive", "Quiet Time Rankings"])
 
-# Dropdown for selecting a specific region
-unique_regions = sorted(df_clean['region'].unique())
-selected_region = st.sidebar.selectbox("Select Region for Deep Dive:", unique_regions)
+st.sidebar.markdown("---")
 
-# Slider for choosing the number of widespread attacks
-num_corridors = st.sidebar.slider("Widespread Attacks to Display:", min_value=3, max_value=10, value=3)
+# Conditional sidebar inputs based on navigation selection
+if nav_choice == "National Overview":
+    st.sidebar.subheader("Global Filters")
+    num_corridors = st.sidebar.slider("Widespread Attacks to Display:", min_value=3, max_value=10, value=3)
 
-# ==========================================
-# STEP 4: Processing Pre-calculated Aggregations
-# ==========================================
-# Regional stats
-region_stats = df_clean.groupby('region').size().reset_index(name='alert_count').sort_values(by='alert_count', ascending=False)
-
-# Gap rankings via loop calculation
-gap_records = []
-for reg in unique_regions:
-    reg_data = df_clean[df_clean['region'] == reg]
-    mean_gap = reg_data['hours_since_last_alert'].mean()
-    gap_records.append({'region': reg, 'avg_quiet_time_hours': mean_gap})
-gap_summary_df = pd.DataFrame(gap_records).sort_values(by='avg_quiet_time_hours', ascending=True).reset_index(drop=True)
+elif nav_choice == "Regional Deep Dive":
+    st.sidebar.subheader("Regional Filters")
+    selected_region = st.sidebar.selectbox("Select Region for Deep Dive:", unique_regions)
 
 # ==========================================
-# STEP 5: Main Panel Tabs Layout
+# STEP 5: Main Panel Content Routing
 # ==========================================
 st.title("🇺🇦 Ukraine Air Raid Alerts: Time Series Dashboard")
-tab1, tab2, tab3 = st.tabs(["National Overview", "Regional Deep Dive", "Quiet Time Rankings"])
 
-# --- TAB 1: National Overview ---
-with tab1:
+# --- CASE 1: National Overview ---
+if nav_choice == "National Overview":
     # Render Automated Report Summary
     st.markdown(generate_executive_summary(df_clean, region_stats, gap_summary_df))
     st.markdown("---")
@@ -153,8 +161,8 @@ with tab1:
         time_str = row['date_hour'].strftime('%Y-%m-%d %H:00')
         st.info(f"**[{time_str}]** Affected Regions Count: **{row['regions_count']}** \n*Regions:* {', '.join(row['region'])}")
 
-# --- TAB 2: Regional Deep Dive ---
-with tab2:
+# --- CASE 2: Regional Deep Dive ---
+elif nav_choice == "Regional Deep Dive":
     st.markdown(f"## Customized Analytics for: **{selected_region}**")
     
     # Filter data specific to selected region
@@ -185,8 +193,8 @@ with tab2:
     ax4.set_xticks(range(0, 24))
     st.pyplot(fig4)
 
-# --- TAB 3: Quiet Time Rankings ---
-with tab3:
+# --- CASE 3: Quiet Time Rankings ---
+elif nav_choice == "Quiet Time Rankings":
     st.markdown("## National Quiet Time Rankings")
     st.markdown("Regions sorted by the average period of silence between consecutive air raid alerts. Shorter periods indicate high intensity or frequent tactical overlapping.")
     st.dataframe(gap_summary_df, use_container_width=True)
