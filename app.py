@@ -21,7 +21,7 @@ def load_and_clean_data(url):
         
     # Convert to datetime, localize to UTC, then convert to Europe/Kyiv timezone
     df['started_at'] = pd.to_datetime(df['started_at'], utc=True).dt.tz_convert('Europe/Kyiv').dt.tz_localize(None)
-    df['finished_at'] = pd.to_datetime(df['finished_at'], utc=True).dt.tz_localize(None)
+    df['finished_at'] = pd.to_datetime(df['finished_at'], utc=True).dt.tz_convert('Europe/Kyiv').dt.tz_localize(None)
     
     # Calculate duration
     df['duration_min'] = (df['finished_at'] - df['started_at']).dt.total_seconds() / 60
@@ -33,11 +33,6 @@ def load_and_clean_data(url):
     df_clean = df_clean.sort_values(by=['region', 'started_at'])
     df_clean['hours_since_last_alert'] = df_clean.groupby('region')['started_at'].diff().dt.total_seconds() / 3600
     df_clean['hour'] = df_clean['started_at'].dt.hour
-    
-    # Move calendar components inside the cached tracking pipeline to prevent structure breaks
-    df_clean['day_of_week'] = df_clean['started_at'].dt.dayofweek
-    days_map = {0: 'Monday', 1: 'Tuesday', 2: 'Wednesday', 3: 'Thursday', 4: 'Friday', 5: 'Saturday', 6: 'Sunday'}
-    df_clean['day_name'] = df_clean['day_of_week'].map(days_map)
     
     return df_clean
 
@@ -62,6 +57,9 @@ for reg in unique_regions:
     mean_gap = reg_data['hours_since_last_alert'].mean()
     gap_records.append({'region': reg, 'avg_quiet_time_hours': mean_gap})
 gap_summary_df = pd.DataFrame(gap_records).sort_values(by='avg_quiet_time_hours', ascending=True).reset_index(drop=True)
+
+# Generate formatted labels for all 24 hours
+hour_labels = [f"{h:02d}:00" for h in range(24)]
 
 # ==========================================
 # STEP 3: Automated Executive Summary Function
@@ -97,7 +95,6 @@ nav_choice = st.sidebar.radio("Go to:", ["National Overview", "Regional Deep Div
 
 st.sidebar.markdown("---")
 
-# Conditional sidebar inputs based on navigation selection
 if nav_choice == "National Overview":
     st.sidebar.subheader("Global Filters")
     num_corridors = st.sidebar.slider("Widespread Attacks to Display:", min_value=3, max_value=10, value=3)
@@ -105,9 +102,6 @@ if nav_choice == "National Overview":
 elif nav_choice == "Regional Deep Dive":
     st.sidebar.subheader("Regional Filters")
     selected_region = st.sidebar.selectbox("Select Region for Deep Dive:", unique_regions)
-
-# Generate formatted x-ticks labels for hourly charts
-hour_labels = [f"{h:02d}:00" for h in range(24)]
 
 # ==========================================
 # STEP 5: Main Panel Content Routing
@@ -119,7 +113,6 @@ if nav_choice == "National Overview":
     st.markdown(generate_executive_summary(df_clean, region_stats, gap_summary_df))
     st.markdown("---")
     
-    # Render KPI Cards
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Total Air Raid Alerts", f"{len(df_clean):,}")
     col2.metric("Mean Duration", f"{df_clean['duration_min'].mean():.1f} min")
@@ -137,29 +130,31 @@ if nav_choice == "National Overview":
     ax1.set_ylabel('Region')
     st.pyplot(fig1)
     
-    # Plot 2: Line Chart for Hourly Trend
-    hourly_trend = df_clean.groupby('hour').size().reset_index(name='count')
+    # Plot 2: Line Chart for Hourly Trend (Safely reindexed to 24 hours)
+    hourly_trend = df_clean.groupby('hour').size().reindex(range(24), fill_value=0).reset_index(name='count')
+    
     fig2, ax2 = plt.subplots(figsize=(10, 4))
     sns.lineplot(data=hourly_trend, x='hour', y='count', marker='o', color='crimson', linewidth=2, ax=ax2)
-    ax2.set_title('National Air Raid Alert Activity Trend by Hour of the Day (Kyiv Time)', fontsize=14)
+    ax2.set_title('National Air Raid Alert Activity Trend by Hour of the Day', fontsize=14)
     ax2.set_xlabel('Hour of the Day (Kyiv Time)')
     ax2.set_ylabel('Total Alert Count')
-    ax2.set_xticks(range(0, 24))
+    ax2.set_xticks(range(24))
     ax2.set_xticklabels(hour_labels, rotation=45)
-    plt.tight_layout()
     st.pyplot(fig2)
     
-    # Plot 3: National Global Heatmap
-    national_pivot = df_clean.pivot_table(index='region', columns='hour', values='duration_min', aggfunc='count').fillna(0)
-    national_pivot = national_pivot.reindex(region_stats['region'])
+    # Plot 3: National Global Heatmap (Safely reindexed columns)
+    national_pivot = df_clean.pivot_table(index='region', columns='hour', values='duration_min', aggfunc='count')
+    # Force 24 columns and fill NaNs
+    national_pivot = national_pivot.reindex(index=region_stats['region'], columns=range(24)).fillna(0)
+    # Rename columns to our formatted strings
+    national_pivot.columns = hour_labels
+    
     fig3, ax3 = plt.subplots(figsize=(12, 8))
     sns.heatmap(national_pivot, cmap='YlOrRd', annot=False, fmt='g', cbar_kws={'label': 'Total Alert Count'}, ax=ax3)
-    ax3.set_title('National Heatmap: Alert Density by Region and Hour of Day (Kyiv Time)', fontsize=14)
+    ax3.set_title('National Heatmap: Alert Density by Region and Hour of Day', fontsize=14)
     ax3.set_xlabel('Hour of the Day (Kyiv Time)')
     ax3.set_ylabel('Region')
-    ax3.set_xticks(range(0, 24))
-    ax3.set_xticklabels(hour_labels, rotation=45)
-    plt.tight_layout()
+    ax3.tick_params(axis='x', rotation=45)
     st.pyplot(fig3)
     
     # Widespread Corridor Attack List
@@ -184,22 +179,28 @@ elif nav_choice == "Regional Deep Dive":
     r_col1.metric("Total Alerts in Region", f"{len(region_subset):,}")
     r_col2.metric("Average Quiet Time Between Waves", f"{avg_quiet_time:.1f} Hours")
     
-    # Ordered days mapping definition
+    # Build Localized Heatmap
+    df_clean['day_of_week'] = df_clean['started_at'].dt.dayofweek
+    days_map = {0: 'Monday', 1: 'Tuesday', 2: 'Wednesday', 3: 'Thursday', 4: 'Friday', 5: 'Saturday', 6: 'Sunday'}
+    df_clean['day_name'] = df_clean['day_of_week'].map(days_map)
     ordered_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     
-    # Directly pivot based on pre-calculated inside Step 1 columns
-    regional_pivot = region_subset.pivot_table(
-        index='day_name', columns='hour', values='duration_min', aggfunc='count'
-    ).reindex(ordered_days).fillna(0)
+    region_subset_heatmap = df_clean[df_clean['region'] == selected_region]
     
-    fig4, ax4 = plt.subplots(figsize=(12, 5))
+    regional_pivot = region_subset_heatmap.pivot_table(
+        index='day_name', columns='hour', values='duration_min', aggfunc='count'
+    )
+    # Force 7 days (rows) and 24 hours (columns)
+    regional_pivot = regional_pivot.reindex(index=ordered_days, columns=range(24)).fillna(0)
+    # Rename columns safely
+    regional_pivot.columns = hour_labels
+    
+    fig4, ax4 = plt.subplots(figsize=(12, 4))
     sns.heatmap(regional_pivot, cmap='rocket_r', annot=False, fmt='g', cbar_kws={'label': 'Alerts'}, ax=ax4)
-    ax4.set_title(f'Time Patterns Heatmap: {selected_region} (Day of Week vs Hour Kyiv Time)', fontsize=14)
+    ax4.set_title(f'Time Patterns Heatmap: {selected_region}', fontsize=14)
     ax4.set_xlabel('Hour of the Day (Kyiv Time)')
     ax4.set_ylabel('Day of Week')
-    ax4.set_xticks(range(0, 24))
-    ax4.set_xticklabels(hour_labels, rotation=45)
-    plt.tight_layout()
+    ax4.tick_params(axis='x', rotation=45)
     st.pyplot(fig4)
 
 # --- CASE 3: Quiet Time Rankings ---
